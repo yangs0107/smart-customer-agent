@@ -170,3 +170,13 @@ OpenAIEmbeddings(
 Python 3.12 · LangChain 1.4 · LangGraph 1.2 · Chroma 1.5 · FastAPI · Streamlit · SQLite
 
 模型：`qwen3.8-flash`（对话）· `text-embedding-v4`（向量，1024 维）· `qwen3.7-text-rerank`（精排）
+
+---
+
+## 数据来源
+
+`data/` 下的知识库文档（扫地机器人问答、故障排除、维护保养、选购指南等）与
+`data/external/records.csv` 均为演示用公开语料，来源为参考项目
+[lhh737/LangChain-ReAct-Agent](https://github.com/lhh737/LangChain-ReAct-Agent)，
+版权归原作者所有，仅用于学习与功能演示。如需商用请自行替换为自有语料。
+
