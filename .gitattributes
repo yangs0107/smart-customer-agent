@@ -1,0 +1,9 @@
+# 让 git 自动处理文本换行符，仓库内统一存储 LF
+* text=auto
+
+# 显式声明二进制文件，避免 git 做文本 diff 与换行转换
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.db   binary
