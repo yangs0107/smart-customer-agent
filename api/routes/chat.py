@@ -2,6 +2,8 @@
 
 import json
 import uuid
+from collections import defaultdict, deque
+from time import monotonic
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -15,6 +17,7 @@ from api.schemas import (
     RenameResponse,
     SessionListResponse,
 )
+from utils.config_handler import agent_conf
 from utils.logger_handler import logger
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -26,6 +29,34 @@ SSE_HEADERS = {
     "X-Accel-Buffering": "no",
 }
 
+# ---------------------------------------------------------------- 简易限流
+# 对外分享时保护 API 额度：单 IP 滑动窗口计数，进程内存储，重启即清零。
+_RATE_LIMIT = int(agent_conf.get("rate_limit_per_hour", 0) or 0)
+_WINDOW = 3600.0
+_hits: dict[str, deque] = defaultdict(deque)
+
+
+def _client_ip(request: Request) -> str:
+    """反向代理后 request.client.host 是代理地址，优先取 X-Forwarded-For。"""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(request: Request) -> None:
+    if _RATE_LIMIT <= 0:
+        return
+    ip = _client_ip(request)
+    now = monotonic()
+    bucket = _hits[ip]
+    while bucket and now - bucket[0] > _WINDOW:
+        bucket.popleft()
+    if len(bucket) >= _RATE_LIMIT:
+        logger.warning("触发限流 | ip=%s | 窗口内 %d 次", ip, len(bucket))
+        raise HTTPException(status_code=429, detail="提问过于频繁，请稍后再试")
+    bucket.append(now)
+
 
 def _frame(event: str, data: dict) -> str:
     """把事件字典拼成 SSE 帧：event 行 + data 行 + 空行结尾。"""
@@ -34,6 +65,7 @@ def _frame(event: str, data: dict) -> str:
 
 @router.post("/stream")
 def chat_stream(payload: ChatRequest, request: Request) -> StreamingResponse:
+    _check_rate_limit(request)
     agent = request.app.state.agent
     thread_id = payload.thread_id or uuid.uuid4().hex
 

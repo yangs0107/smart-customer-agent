@@ -119,6 +119,33 @@ streamlit run ui/app.py
 
 ---
 
+## 对外分享（单端口模式）
+
+本地开发用 Streamlit 界面，但如果要把服务公开给其他人访问，两个端口会带来麻烦（托管平台只给一个端口）。
+为此项目提供了一套**单端口**方案：FastAPI 在 `/` 直接返回一个轻量聊天页面，页面用 `fetch` 消费同一个端口的 SSE。
+
+```bash
+# 本地体验单端口模式
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+# 浏览器打开 http://127.0.0.1:8000
+```
+
+云端部署使用 `start.sh`（读取平台注入的 `PORT` 变量）：
+
+```bash
+PORT=3000 bash start.sh
+```
+
+为避免公开链接被滥用、消耗 API 额度，`config/agent.yml` 提供按 IP 的滑动窗口限流：
+
+```yaml
+rate_limit_per_hour: 40   # 0 表示不限
+```
+
+密钥通过 `.env` 读取（`python-dotenv` 在 `api/main.py` 导入模型前加载），`.env` 已被 `.gitignore` 排除。
+
+---
+
 ## API
 
 | 方法 | 路径 | 说明 |

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>扫地机器人客服 Agent</title>
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --panel: #ffffff;
+    --text: #1f1f1d;
+    --muted: #6b6b66;
+    --line: #e2e0d9;
+    --brand: #185fa5;
+    --brand-light: #e6f1fb;
+    --tool: #0f6e56;
+    --tool-light: #e1f5ee;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 14px; line-height: 1.7;
+  }
+  header {
+    padding: 18px 24px 14px; background: var(--panel);
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+  header p { margin: 0; font-size: 12px; color: var(--muted); }
+  .status { float: right; font-size: 12px; color: var(--muted); }
+  .status b { font-weight: 500; color: var(--tool); }
+  main { max-width: 780px; margin: 0 auto; padding: 20px 16px 120px; }
+  .msg { margin-bottom: 18px; display: flex; gap: 10px; }
+  .avatar {
+    flex: 0 0 26px; height: 26px; border-radius: 8px; display: grid;
+    place-items: center; font-size: 12px; font-weight: 600;
+  }
+  .msg.user .avatar { background: var(--brand-light); color: var(--brand); }
+  .msg.bot .avatar { background: var(--tool-light); color: var(--tool); }
+  .bubble { flex: 1; min-width: 0; }
+  .bubble .name { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .body { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .msg.user .body { background: var(--brand-light); border-color: #c9dff5; }
+  .body h1, .body h2, .body h3 { font-size: 14px; margin: 12px 0 6px; font-weight: 600; }
+  .body p { margin: 6px 0; }
+  .body ul, .body ol { margin: 6px 0; padding-left: 22px; }
+  .body code { background: #f1efe8; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .body table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
+  .body th, .body td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+  .tools { margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+  .tool {
+    font-size: 12px; color: var(--tool); background: var(--tool-light);
+    border: 1px solid #bfe3d5; border-radius: 8px; padding: 6px 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tool.pending { color: var(--muted); background: #f1efe8; border-color: var(--line); }
+  footer {
+    position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg);
+    border-top: 1px solid var(--line); padding: 12px 16px;
+  }
+  .composer { max-width: 780px; margin: 0 auto; display: flex; gap: 8px; }
+  input[type=text] {
+    flex: 1; padding: 11px 14px; border: 1px solid var(--line); border-radius: 10px;
+    font-size: 14px; font-family: inherit; background: var(--panel); color: var(--text);
+  }
+  input[type=text]:focus { outline: 2px solid var(--brand-light); border-color: var(--brand); }
+  button {
+    padding: 0 20px; border: 0; border-radius: 10px; background: var(--brand);
+    color: #fff; font-size: 14px; cursor: pointer; font-family: inherit;
+  }
+  button:disabled { background: #b4b2a9; cursor: not-allowed; }
+  .hint { max-width: 780px; margin: 8px auto 0; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <span class="status" id="status">连接中…</span>
+  <h1>扫地机器人客服 Agent</h1>
+  <p>RAG 检索 + 精排 ｜ 多轮记忆 ｜ 报告生成</p>
+</header>
+
+<main id="chat"></main>
+
+<footer>
+  <div class="composer">
+    <input id="q" type="text" placeholder="请输入你的问题…" autocomplete="off" />
+    <button id="send">发送</button>
+  </div>
+  <div class="hint" id="hint">示例：扫地机器人滤网多久清理一次？／帮我生成这个月的使用报告</div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script>
+const chat = document.getElementById('chat');
+const input = document.getElementById('q');
+const sendBtn = document.getElementById('send');
+const statusEl = document.getElementById('status');
+
+let threadId = new URLSearchParams(location.search).get('tid') || null;
+let busy = false;
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+function addMessage(role, text) {
+  const wrap = el('div', 'msg ' + role);
+  wrap.appendChild(el('div', 'avatar', role === 'user' ? '你' : 'AI'));
+  const bubble = el('div', 'bubble');
+  bubble.appendChild(el('div', 'name', role === 'user' ? '你' : '客服 Agent'));
+  const body = el('div', 'body');
+  body.textContent = text || '';
+  bubble.appendChild(body);
+  const tools = el('div', 'tools');
+  bubble.appendChild(tools);
+  wrap.appendChild(bubble);
+  chat.appendChild(wrap);
+  window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+  return { body, tools };
+}
+
+function renderMarkdown(node, text) {
+  if (window.marked) {
+    node.innerHTML = window.marked.parse(text);
+    node.querySelectorAll('script').forEach((s) => s.remove());
+  } else {
+    node.textContent = text;
+  }
+}
+
+async function checkHealth() {
+  try {
+    const r = await fetch('/health');
+    statusEl.innerHTML = r.ok ? '<b>● 服务正常</b>' : '● 服务异常';
+  } catch (e) {
+    statusEl.textContent = '● 无法连接服务';
+  }
+}
+
+async function ask(question) {
+  busy = true;
+  sendBtn.disabled = true;
+  addMessage('user', question);
+  const { body, tools } = addMessage('bot', '');
+  body.textContent = '正在思考…';
+
+  let answer = '';
+  const pending = el('div', 'tool pending', '处理中…');
+  tools.appendChild(pending);
+
+  try {
+    const resp = await fetch('/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, thread_id: threadId }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        handleFrame(frame, { body, tools, pending });
+        const m = frame.match(/event: (\w+)\s*\ndata: ([\s\S]*)/);
+        if (m && m[1] === 'token') {
+          try { answer += JSON.parse(m[2]).content || ''; } catch (e) {}
+          renderMarkdown(body, answer);
+        }
+      }
+    }
+  } catch (err) {
+    body.textContent = '请求失败：' + err.message;
+  } finally {
+    if (pending.parentNode) pending.remove();
+    if (answer) renderMarkdown(body, answer);
+    busy = false;
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+function handleFrame(frame, ctx) {
+  const evLine = frame.match(/^event: (.+)$/m);
+  const dataLine = frame.match(/^data: ([\s\S]*)$/m);
+  if (!evLine) return;
+  const event = evLine[1].trim();
+  let data = {};
+  try { data = JSON.parse(dataLine ? dataLine[1] : '{}'); } catch (e) {}
+
+  if (event === 'tool_call') {
+    const chip = el('div', 'tool', '调用 ' + data.name + ' ｜ ' + JSON.stringify(data.args || {}));
+    ctx.tools.insertBefore(chip, ctx.pending);
+  } else if (event === 'tool_result') {
+    const chip = el('div', 'tool', '返回 ' + data.name + ' ｜ ' + String(data.content || '').slice(0, 90) + '…');
+    ctx.tools.insertBefore(chip, ctx.pending);
+  } else if (event === 'done') {
+    threadId = data.thread_id || threadId;
+    if (threadId) history.replaceState(null, '', '?tid=' + threadId);
+  } else if (event === 'error') {
+    ctx.body.textContent = '出错：' + (data.message || '未知错误');
+  }
+}
+
+function submit() {
+  const v = input.value.trim();
+  if (!v || busy) return;
+  input.value = '';
+  ask(v);
+}
+
+sendBtn.addEventListener('click', submit);
+input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+
+checkHealth();
+
+if (threadId) {
+  fetch('/chat/history?thread_id=' + encodeURIComponent(threadId))
+    .then((r) => r.json())
+    .then((d) => {
+      (d.messages || []).forEach((m) => addMessage(m.role === 'user' ? 'user' : 'bot', m.content));
+    })
+    .catch(() => {});
+}
+</script>
+</body>
+</html>

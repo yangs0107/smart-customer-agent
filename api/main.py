@@ -5,12 +5,19 @@
 
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
-from agent.react_agent import ReactAgent
-from api.routes import chat
-from utils.logger_handler import logger
+from utils.path_tool import get_abs_path
+
+# 必须在导入 model/agent 之前加载 .env：model.factory 在导入时就会读取密钥
+load_dotenv(get_abs_path(".env"))
+
+from agent.react_agent import ReactAgent  # noqa: E402
+from api.routes import chat  # noqa: E402
+from utils.logger_handler import logger  # noqa: E402
 
 
 @asynccontextmanager
@@ -38,3 +45,9 @@ app.include_router(chat.router)
 @app.get("/health", tags=["system"])
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    """单端口模式：同一个端口同时提供页面与接口，便于对外分享。"""
+    return FileResponse(get_abs_path("api/static/index.html"), media_type="text/html")

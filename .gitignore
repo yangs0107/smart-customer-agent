@@ -21,3 +21,6 @@ __pycache__/
 
 # AI 助手工作目录
 .workbuddy/
+
+# 发布标记文件
+*.genie
