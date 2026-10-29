@@ -95,6 +95,23 @@ embed_model = OpenAIEmbeddings(model="text-embedding-v4", base_url=BASE,
 
 实际装的是 `chromadb 1.5.9`，原项目锁的是 `0.5.15`。**统一走 `langchain_chroma.Chroma` 封装，不要直连 `chromadb.PersistentClient`**，否则会遇到 1.x 的 API 变更。
 
+### 2.4 重排模型（已实测可用，非首版必需）
+
+平台模型列表（`GET /compatible-mode/v1/models`，共 183 个）中有 `qwen3.7-text-rerank`。
+
+**但它不在 OpenAI 兼容协议内**：`/compatible-mode/v1/rerank` 返回 404，必须走 DashScope 原生端点。
+
+| 项 | 值 |
+|---|---|
+| URL | `https://cn-beijing.maas.qianwenaiapi.com/api/v1/services/rerank/text-rerank/text-rerank` |
+| Header | `Authorization: Bearer <KEY>` + `X-DashScope-Service: text-rerank` |
+| 报文 | `{"model": "...", "input": {"query": q, "documents": [d1,d2]}, "parameters": {"return_documents": false, "top_n": n}}` |
+| 返回 | `output.results[] = {index, relevance_score}` |
+
+实测打分具备区分度（query「滚刷缠头发怎么办」→ 对应切片 0.909，无关切片 0.15 / 0.009）。
+
+**首版决策（用户已确认）**：阶段 5 **直接接入重排**——粗排 `k=20` → 精排 `rerank_top_n=3`。原建议的「先纯向量召回基线、通过后再增强」被否决，代价是无法通过与基线的对比量化重排收益，需要靠人工抽检判断召回质量。
+
 ---
 
 ## 3. 开发顺序
@@ -122,12 +139,15 @@ python -c "from model.factory import chat_model, embed_model; print(chat_model.i
 **创建**：`config/` 目录、`utils/` 目录
 
 **文件**：
-- `config/rag.yml`：`base_url` / `chat_model_name` / `embedding_model_name`
+- `config/rag.yml`：`base_url` / `chat_model_name` / `embedding_model_name` / `rerank_base_url` / `rerank_model_name` / `rerank_top_n`
 - `config/chroma.yml`：`collection_name` `persist_directory` `k` `data_path` `md5_hex_store` `allow_knowledge_file_type` `chunk_size` `chunk_overlap` `separators`
 - `config/agent.yml`：`external_data_path`
 - `config/prompts.yml`：三个提示词路径
 - `utils/path_tool.py`：`get_abs_path(relative_path) -> str`
 - `utils/config_handler.py`：导入时加载 YAML，导出 `rag_conf` / `chroma_conf` / `agent_conf` / `prompts_conf`
+- `model/rerank.py`：`rerank(query, documents, top_n=None) -> list[dict]`，走 DashScope 原生端点（见 §2.4）
+
+**`k` 的语义已变更**：`chroma_conf["k"] = 20` 是**粗排召回条数**，最终喂给 LLM 的条数由 `rag_conf["rerank_top_n"] = 3` 决定。
 
 **关键点**
 
@@ -194,7 +214,8 @@ python -c "from utils.prompt_loader import load_system_prompts; print(load_syste
 - 提供 `get_retriever()`
 
 **rag_service 职责**
-- `rag_summarize(query) -> str`：检索 Top-K → 拼接 → LLM 按 `rag_summarize.txt` 总结
+- `rag_summarize(query) -> str`：**粗排召回 k=20 条 → 重排保留 top_n=3 条** → 拼接 → LLM 按 `rag_summarize.txt` 总结
+- 重排调用 `model.rerank.rerank()`，用返回的 `index` 还原 `Document`，保留原始 `source` 元数据便于溯源
 
 **验收（不要接 Agent）**
 
@@ -203,6 +224,8 @@ python -c "from rag.rag_service import RagSummarizeService; print(RagSummarizeSe
 ```
 
 输出必须是基于知识库的中文总结。若失败，**先打印命中的切片确认召回正常**，再怀疑模型。
+
+重排有效性需单独记录：同一批问题，对比「重排前 Top-3」与「重排后 Top-3」的命中差异，写入当日工作日志。
 
 同时检查：首次运行生成 `chroma_db/` 与 `md5.txt`；再次运行跳过全部文件。
 
@@ -282,6 +305,9 @@ python -m agent.react_agent
 | POST | `/chat/stream` | body `{thread_id?, question}` → SSE |
 | GET | `/chat/history?thread_id=` | 历史消息 |
 | POST | `/chat/new` | 生成新 thread_id |
+| GET | `/chat/sessions` | 会话列表（标题 / 更新时间） |
+| DELETE | `/chat/sessions/{thread_id}` | 删除会话（sessions + checkpoints + writes 三处） |
+| PATCH | `/chat/sessions/{thread_id}` | body `{title}` 重命名会话 |
 | GET | `/health` | 健康检查 |
 
 **SSE 事件格式**
@@ -368,13 +394,15 @@ python -m rag.vector_store
 ## 7. 进度
 
 ```
-[ ] 阶段 1  模型能说话        model/factory.py
-[ ] 阶段 2  配置与路径        config/  utils/path_tool  utils/config_handler
-[ ] 阶段 3  日志              utils/logger_handler
-[ ] 阶段 4  文档与提示词      utils/file_handler  utils/prompt_loader  prompts/
-[ ] 阶段 5  RAG 链路          rag/vector_store  rag/rag_service
-[ ] 阶段 6  工具与中间件      agent/tools/
-[ ] 阶段 7  Agent 与记忆      agent/react_agent.py
-[ ] 阶段 8  FastAPI 接口      api/
-[ ] 阶段 9  Streamlit 前端    ui/app.py
+[x] 阶段 1  模型能说话        model/factory.py
+[x] 阶段 2  配置与路径        config/  utils/path_tool  utils/config_handler
+[x] 阶段 3  日志              utils/logger_handler
+[x] 阶段 4  文档与提示词      utils/file_handler  prompts/（main / rag_summarize / report）
+[x] 阶段 5  RAG 链路          rag/vector_store  rag/rag_service  model/rerank.py（含精排）
+[x] 阶段 6  工具与中间件      agent/tools/agent_tools.py（7 个）  agent/tools/middleware.py（3 个）
+[x] 阶段 7  Agent 与记忆      agent/react_agent.py
+[x] 阶段 8  FastAPI 接口      api/（main  schemas  routes/chat）
+[x] 阶段 9  Streamlit 前端    ui/app.py
 ```
+
+> 注：阶段 7 的 ReAct 主干已用探针 `agent/spike_react.py` 预先验证（create_agent 装配、并行 tool_calls、`@before_model` 触发均正常，四次运行工具选择正确）。探针为临时代码，正式实现时删除或重写。
