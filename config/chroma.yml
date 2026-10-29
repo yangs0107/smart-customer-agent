@@ -1,0 +1,13 @@
+# 知识库与切分配置
+collection_name: "agent"
+persist_directory: "chroma_db"
+data_path: "data"
+md5_hex_store: "md5.txt"
+allow_knowledge_file_type: [".txt", ".pdf"]
+
+chunk_size: 200
+chunk_overlap: 20
+separators: ["\n\n", "\n", "。", "！", "？", "；", ". ", " ", ""]
+
+# 粗排召回条数（精排前的候选集大小）
+recall_k: 20

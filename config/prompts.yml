@@ -1,0 +1,4 @@
+# 提示词文件路径（相对项目根目录）
+main_prompt: "prompts/main_prompt.txt"
+rag_summarize_prompt: "prompts/rag_summarize.txt"
+report_prompt: "prompts/report_prompt.txt"

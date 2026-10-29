@@ -1,0 +1,13 @@
+# 模型接入配置
+# 对话与向量走 OpenAI 兼容协议；重排走 DashScope 原生协议，故单独给 URL。
+base_url: "https://cn-beijing.maas.qianwenaiapi.com/compatible-mode/v1"
+
+chat_model_name: "qwen3.8-flash"
+embedding_model_name: "text-embedding-v4"
+# 该平台单次 embedding 批量上限为 10，超过报 400
+embedding_batch_size: 10
+
+rerank_url: "https://cn-beijing.maas.qianwenaiapi.com/api/v1/services/rerank/text-rerank/text-rerank"
+rerank_model_name: "qwen3.7-text-rerank"
+# 精排后喂给 LLM 的切片条数
+rerank_top_n: 3

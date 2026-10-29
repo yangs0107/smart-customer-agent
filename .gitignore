@@ -6,6 +6,8 @@ logs/
 chroma_db/
 md5.txt
 *.db
+*.db-wal
+*.db-shm
 
 # Python
 __pycache__/
