@@ -11,13 +11,47 @@
 |---|---|
 | 环境 | conda `agent312`，路径 `D:\Python\CondaEnvs\agent312` |
 | Python | 3.12.16 |
-| 模型 | 阿里云百炼 `qwen3-max` + `text-embedding-v4` |
-| Key | `.env` → `DASHSCOPE_API_KEY=sk-xxx` |
+| 服务 | **第三方 MaaS 平台**（`cn-beijing.maas.qianwenaiapi.com`），不是阿里云官方百炼 |
+| 协议 | **OpenAI 兼容模式**。该服务的 DashScope 原生文本接口不可用 |
+| 端点 | `https://cn-beijing.maas.qianwenaiapi.com/compatible-mode/v1` |
+| 对话模型 | `qwen3.8-flash` |
+| Embedding | `text-embedding-v4`（1024 维） |
+| Key | 系统环境变量 `DASHSCOPE_API_KEY`（117 位，该平台格式） |
 
 激活：`conda activate agent312`
 装包：`uv pip install --python "D:\Python\CondaEnvs\agent312\python.exe" <包名>`
 
-已验证版本：langchain 1.4.7 / langgraph 1.2.18 / chromadb 1.5.9 / dashscope 2.0.2 / fastapi 0.162.0 / streamlit 1.66.1
+已验证版本：langchain 1.4.7 / langgraph 1.2.18 / **langchain-openai 1.7.3** / chromadb 1.5.9 / dashscope 2.0.2 / fastapi 0.162.0 / streamlit 1.66.1
+
+**模型接入方式（2026-10-29 实测确定）**
+
+原项目的 `ChatTongyi` + `DashScopeEmbeddings` 在本环境**不可用** —— 该平台只开放 OpenAI 兼容协议。
+
+| 接口路径 | 结果 |
+|---|---|
+| DashScope `text-generation` | ❌ 400 `url error` |
+| DashScope `multimodal-generation` | ✅ 200（`demo1.py` 走这条） |
+| OpenAI 兼容 `chat/completions` | ✅ 200 |
+| OpenAI 兼容 `embeddings` | ✅ 200 |
+
+因此改用 `langchain-openai`：
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+BASE = "https://cn-beijing.maas.qianwenaiapi.com/compatible-mode/v1"
+
+chat_model = ChatOpenAI(model="qwen3.8-flash", base_url=BASE, api_key=KEY, temperature=0)
+
+# check_embedding_ctx_length=False 必须加：
+# 默认会把文本转成 token id 数组，该服务端要求 input 是字符串数组，否则 400
+embed_model = OpenAIEmbeddings(model="text-embedding-v4", base_url=BASE,
+                               api_key=KEY, check_embedding_ctx_length=False)
+```
+
+**已验证能力**：普通对话 ✅ / `bind_tools` 工具调用 ✅ / 流式 ✅ / Embedding 1024 维 ✅
+
+> 与原项目的偏差：模型层从 `ChatTongyi` 换为 `ChatOpenAI`。二者都实现 LangChain 的 `BaseChatModel` / `Embeddings` 接口，上层代码（Agent、RAG）不受影响。附带好处是若将来换回官方百炼，只需改 `base_url` 与模型名。
 
 ---
 
@@ -88,9 +122,10 @@ Lanchain/
 - [ ] **`factory.py`**
   - 抽象基类 + 两个工厂：`ChatModelFactory` / `EmbeddingsFactory`
   - 模块级导出 `chat_model`、`embed_model`
-  - `ChatTongyi(model=rag_conf["chat_model_name"])`
-  - `DashScopeEmbeddings(model=rag_conf["embedding_model_name"])`
-  - 验：`python -c "from dotenv import load_dotenv; load_dotenv(); from model.factory import chat_model; print(chat_model.invoke('你好').content)"`
+  - 用 `ChatOpenAI(model="qwen3.8-flash", base_url=BASE, api_key=KEY, temperature=0)`
+  - 用 `OpenAIEmbeddings(model="text-embedding-v4", base_url=BASE, api_key=KEY, check_embedding_ctx_length=False)`
+  - `BASE` 与模型名从配置读取，不要硬编码在代码里
+  - 验：`python -c "from model.factory import chat_model, embed_model; print(chat_model.invoke('你好').content[:30]); print(len(embed_model.embed_query('测试')))"`
 
 **提交**：`feat: 实现模型工厂`
 
